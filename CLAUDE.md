@@ -67,6 +67,8 @@ cp .env.example .env
 ```
 
 - 接続確認(Beds24 / PriceLabs 両方に到達できるかを確認): `python scripts/check_connection.py`
+- Beds24初回セットアップ(invite code → refreshToken取得。**beds24.comに到達できる環境で実行**、
+  クラウド実行環境では動かない): `python scripts/beds24_setup.py`
 - テスト全体の実行: `pytest`
 - 単一テストの実行: `pytest tests/test_config.py::test_load_settings_defaults`
 
@@ -88,22 +90,39 @@ cp .env.example .env
 
 ## 外部API連携メモ
 
+両サービスとも、Claude Codeからの連携方法には「公式MCPコネクタ経由」と「このリポジトリの
+自作クライアント(`src/knot_ritsurin/clients/`)経由」の2通りがありうる。現状は下記の通り
+非対称なので、新しくコードを書く前にどちらの経路を使うべきか確認すること。
+
 ### Beds24 (API v2)
 
+- **公式MCPコネクタは存在しない**(claude.aiのコネクタディレクトリを確認済み)。非公式の
+  `beds24-mcp-server`(個人開発者によるnpmパッケージ)は存在するが、ソース未監査の第三者に
+  Beds24の認証情報(料金・在庫・予約を変更できる強い権限)を渡すことになるため、採用する場合は
+  事前にソースコードを確認し、ユーザーの承認を得ること。**現時点では未採用**、このリポジトリの
+  自作 `Beds24Client` を使う方針。
 - ベースURL: `https://beds24.com/api/v2`(`.env` の `BEDS24_BASE_URL`)
 - 認証は2段階:
-  1. Beds24管理画面で発行した invite code を `GET /authentication/setup` に渡すと
-     長期利用可能な `refreshToken` が発行される(この交換作業は初回セットアップ時に手動で行い、
-     得られた `refreshToken` を `.env` の `BEDS24_REFRESH_TOKEN` に保存する。この処理自体は
-     `Beds24Client` には未実装)。
+  1. Beds24管理画面で発行した invite code を `GET /authentication/setup` に `code` ヘッダーで
+     渡すと長期利用可能な `refreshToken` が発行される(`scripts/beds24_setup.py` で実行できる。
+     取得した `refreshToken` は `.env` の `BEDS24_REFRESH_TOKEN` に手動で保存する)。
   2. 保存済みの `refreshToken` を `refreshToken` ヘッダーに載せて `GET /authentication/token`
      を呼ぶと短命の access token が得られる。以降の各APIリクエストには
      `token: <access token>` ヘッダーを付与する。
 - `Beds24Client` は現状 `GET /properties` のみを実装。新しいエンドポイントはこのクラスに
   メソッドとして追加する。
+- **注意**: このリポジトリのクラウド実行環境(Claude Code on the web等)はネットワークポリシーで
+  `beds24.com` への外向き通信をブロックしている(検証済み: `CONNECT tunnel failed, response 403`)。
+  `beds24_setup.py` や `Beds24Client` を使った疎通確認は、beds24.comに到達できる環境
+  (利用者のローカル環境等)で実行すること。
 
 ### PriceLabs (Customer API)
 
+- **公式MCPコネクタが利用可能**(claude.aiのコネクタディレクトリに登録済みで、このアカウントでは
+  既に接続・有効化されている: `mcp__PriceLabs__*` ツール群)。listing一覧・料金・稼働率などの
+  読み取りや、日別オーバーライドの更新等はまずこのMCPツールを使うこと(クラウド実行環境からでも
+  `api.pricelabs.co` への直接HTTP通信はブロックされるため、自作 `PriceLabsClient` は
+  MCPが使えない場合のフォールバック、または将来的な非対話処理向けの実装として位置づける)。
 - ベースURL: `https://api.pricelabs.co/v1`(`.env` の `PRICELABS_BASE_URL`)
 - 認証は静的なAPIキー1本で、`X-API-Key` ヘッダー(大文字小文字を区別)に付与する。
   APIキーは PriceLabs管理画面の Account Settings → API Details から発行する。
